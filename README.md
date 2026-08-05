@@ -1,22 +1,32 @@
-# atc-wallet
+# ATC-Wallet — Wallet Application
 
-Desktop-Wallet für A-TownChain — Key-Management und TX-Signing.
+Wallet für A-TownChain OS — Keys, Tokens, Contracts, DeFi.
 
-## Features (geplant)
-- Key-Management (Ed25519, mnemonics)
-- TX-Signing und -Broadcast
-- Balance-Anzeige
-- Transaction-History
-- DeFi-Integration (Swap, Stake, LP)
-- Multi-Sig-Wallet-Support
-- Hardware-Wallet-Integration (geplant)
+## Features
+- **Key Management** — Ed25519 Keys, Mnemonic, HD-Wallet (BIP44)
+- **Multi-Account** — Mehrere Accounts in einem Wallet
+- **Token Transfer** — ATC Token, Custom Tokens, NFTs
+- **Contract Interaction** — Smart Contracts aufrufen
+- **DeFi** — Staking, Swap, Liquidity
+- **Hardware Wallet** — Ledger, Trezor Support
+- **Multi-Sig** — Multi-Signature Wallets (GCL v2.0)
 
-## Tech Stack
-- Rust (std) + egui (GUI-Framework)
-- Shared Code mit atc-windows-edition / atc-linux-edition
+## Sicherheit
+- Private Keys NIE im Klartext gespeichert (AES-256 verschlüsselt)
+- Mnemonic-Backup mit BIP39
+- Transaction-Signing offline (Air-Gapped Mode)
+- Biometric Auth (Mobile)
 
-## Status
-- Initial: Repo erstellt 05.08.2026
+## Address Format
+```
+ATC + 40 hex chars (20 bytes Ed25519 public key)
+Example: ATCf9327118a7dfb30f72ba6aa82e1186078c42232884
+Checksum: Base58 with version byte
+```
 
----
-Copyright © Michael Wroblewski / A-TownChain-Okosystems. All Rights Reserved.
+## Verwandte Repos
+- [atc-sdk](https://github.com/A-TownChain-Okosystems/atc-sdk) — SDK
+- [atc-contracts](https://github.com/A-TownChain-Okosystems/atc-contracts) — Smart Contracts
+- [atc-cli](https://github.com/A-TownChain-Okosystems/atc-cli) — CLI
+
+[agent: aurora-base44-superagent-6a2756186106d6f0fbb105b5]
