@@ -1,70 +1,35 @@
-# 🌳 Architektur — atc-wallet
+# ARCHITECTURE.md — atc-wallet
 
-> **Stand:** 2026-08-06 | **Version:** v1.0.0
-> **Teil von:** [A-TownChain Ökosystem](https://github.com/A-TownChain-Okosystems)
+> Copyright © Michael Wroblewski / A-TownChain-Okosystems. All Rights Reserved.
 
-## Beschreibung
-
-Wallet-Core-Logik. Key-Management, Transaction-Signing, Balance-Tracking, NFT-Management.
-
-## Metadaten
-
-| Metrik | Wert |
-|--------|------|
-| Layer | L9 — User Apps |
-| Sprint | 2.5 |
-| ATC-Standards | ATC-86, ATC-90 |
-| Status | 🟠 Aufbau |
-| Code-Repo | [atc-wallet](https://github.com/A-TownChain-Okosystems/atc-wallet) |
-| Wiki-Repo | [atc-wallet-wiki](https://github.com/A-TownChain-Okosystems/atc-wallet-wiki) |
-
-## Komponenten-Übersicht
-
-| Komponente | Beschreibung | Status |
-|-----------|-------------|--------|
-| `keymanager.atc` | Key-Manager: keypair gen, import, export, encrypt, store | 📋 GEPLANT |
-| `tx_signer.atc` | Transaction-Signer: build, sign, broadcast, RLP encoding | 📋 GEPLANT |
-| `balance.atc` | Balance-Tracker: query chain, UTXO set, staking balance | 📋 GEPLANT |
-| `nft_viewer.atc` | NFT-Viewer: list, metadata, transfer, history | 📋 GEPLANT |
-| `history.atc` | Transaction-History: filter, paginate, export | 📋 GEPLANT |
-| `faucet.atc` | Faucet-Integration: request testnet tokens | 📋 GEPLANT |
-
-## Architektur-Baum
-
-```
+## File Tree
+```tree
 atc-wallet/
-├── README.md
-├── LICENSE
-├── .gitignore
-├── STATUS.md
-├── ROADMAP.md
-├── CHANGELOG.md
-├── ARCHITECTURE.md
-├── FILE_REGISTER.md
-├── keymanager.atc
-├── tx_signer.atc
-├── balance.atc
-├── nft_viewer.atc
-├── history.atc
-├── faucet.atc
+├── Cargo.toml — GUI Wallet application manifest
+├── .gitignore — Git ignore rules
+└── src/
+    ├── main.rs — GUI wallet launcher and window setup
+    ├── lib.rs — Wallet core business logic library
+    ├── keys.rs — Cryptographic keypair generation, BIP-39 mnemonics, and keystore encryption
+    ├── tx.rs — Transaction builder, Ed25519 payload signing, and serialization
+    ├── gui.rs — Immediate-mode egui user interface components
+    ├── balance.rs — Account balance tracker and token portfolio overview
+    └── history.rs — Transaction history cache and status manager
 ```
 
-## Abhängigkeiten
+## Module Descriptions
+- src/main.rs — Initializes native desktop window and launches egui event loop.
+- src/lib.rs — Core wallet backend library managing state, key security, and transaction signing.
+- src/keys.rs — Generates BIP-39 mnemonic phrases, derives Ed25519 keypairs, and encrypts keystore files using AES-GCM.
+- src/tx.rs — Constructs, signs, and serializes transactions prior to network broadcasting.
+- src/gui.rs — Renders GUI views including account balances, token transfers, key management, and settings.
+- src/balance.rs — Tracks native coin and custom token balances via periodic node queries.
+- src/history.rs — Maintains local transaction history cache and updates confirmation statuses.
 
-- **ATCLang Stdlib** (atc-stdlib)
-- **ATC VM** (atc-vm)
-- **ATC Kernel** (atc-kernel)
+## Build System
+- Cargo.toml — Cross-platform Rust `std` GUI app using `egui` and `eframe`.
 
-## Roadmap
-
-| Phase | Aufgabe | Status |
-|-------|---------|--------|
-| Sprint 2.5 | Komponenten-Definition | ✅ ERLEDIGT |
-| Sprint 2.5 | Architektur-Baum | ✅ ERLEDIGT |
-| Sprint 2.5 | Stub-Dateien erstellen | 🔄 IN ARBEIT |
-| Sprint 2.5 | Implementierung | 📋 GEPLANT |
-| Sprint 2.5.1 | Tests | 📋 GEPLANT |
-| Sprint 2.5.2 | Dokumentation | 📋 GEPLANT |
-
----
-*Auto-generiert 2026-08-06 · Aurora (MasterBrain · Base44)*
+## Dependencies
+- egui / eframe — Immediate mode GUI framework.
+- ed25519-dalek — Fast Ed25519 cryptographic key generation and signature creation.
+- bip39 — Deterministic seed phrase generation.
