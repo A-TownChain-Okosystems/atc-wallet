@@ -1,34 +1,22 @@
 //! Canonical secp256k1 wallet key management for A-TownChain.
+
 use k256::ecdsa::{Signature, SigningKey, VerifyingKey};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use sha2::{Digest, Sha256};
 
 pub const ADDRESS_HRP: &str = "atc";
 pub const ADDRESS_PAYLOAD_LEN: usize = 20;
-pub const ADDRESS_LEN: usize = 37; // "atc1" + 32 data chars + 6 checksum chars
+pub const ADDRESS_LEN: usize = 42;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyPair {
     secret: [u8; 32],
-    #[test]
-    fn shared_cross_language_vector_matches_json() {
-        let vector: serde_json::Value =
-            serde_json::from_str(include_str!("../tests/vectors/wallet_v1.json")).unwrap();
-        let private_key = hex::decode(vector["private_key"].as_str().unwrap()).unwrap();
-        let digest = Sha256::digest(vector["message"].as_str().unwrap().as_bytes());
-        let mut secret = [0u8; 32];
-        secret.copy_from_slice(&private_key);
-        let k = KeyPair::from_seed(secret);
-        let sig = k.sign_digest(&digest.into()).unwrap();
-        assert_eq!(hex::encode(k.public_key_bytes()), vector["public_key_compressed"].as_str().unwrap());
-        assert_eq!(k.address(), vector["address"].as_str().unwrap());
-        assert_eq!(hex::encode(sig.to_bytes()), vector["signature_r_s"].as_str().unwrap());
-    }
-
 }
 
 impl KeyPair {
-    pub fn from_seed(seed: [u8; 32]) -> Self { Self { secret: seed } }
+    pub fn from_seed(seed: [u8; 32]) -> Self {
+        Self { secret: seed }
+    }
 
     pub fn generate() -> Result<Self, KeyError> {
         let mut seed = [0u8; 32];
@@ -42,13 +30,17 @@ impl KeyPair {
             .expect("KeyPair invariant: secret must be a valid secp256k1 scalar")
     }
 
-    pub fn verifying_key(&self) -> VerifyingKey { self.signing_key().verifying_key().clone() }
+    pub fn verifying_key(&self) -> VerifyingKey {
+        self.signing_key().verifying_key().clone()
+    }
 
     pub fn public_key_bytes(&self) -> Vec<u8> {
         self.verifying_key().to_encoded_point(true).as_bytes().to_vec()
     }
 
-    pub fn secret_bytes(&self) -> [u8; 32] { self.secret }
+    pub fn secret_bytes(&self) -> [u8; 32] {
+        self.secret
+    }
 
     pub fn address_payload(&self) -> [u8; ADDRESS_PAYLOAD_LEN] {
         Sha256::digest(self.public_key_bytes())[..ADDRESS_PAYLOAD_LEN]
@@ -62,24 +54,40 @@ impl KeyPair {
 
     pub fn sign_digest(&self, digest: &[u8; 32]) -> Result<Signature, KeyError> {
         use k256::ecdsa::signature::hazmat::PrehashSigner;
-        let signature = self.signing_key().sign_prehash(digest).map_err(|_| KeyError::SigningFailed)?;
+
+        let signature = self
+            .signing_key()
+            .sign_prehash(digest)
+            .map_err(|_| KeyError::SigningFailed)?;
         Ok(signature.normalize_s().unwrap_or(signature))
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KeyError { Randomness, InvalidSecret, SigningFailed }
+pub enum KeyError {
+    Randomness,
+    InvalidSecret,
+    SigningFailed,
+}
 
 const CHARSET: &[u8; 32] = b"qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 
 fn polymod(values: &[u8]) -> u32 {
-    const GEN: [u32; 5] = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+    const GEN: [u32; 5] = [
+        0x3b6a57b2,
+        0x26508e6d,
+        0x1ea119fa,
+        0x3d4233dd,
+        0x2a1462b3,
+    ];
     let mut chk = 1u32;
     for &v in values {
         let top = chk >> 25;
         chk = ((chk & 0x1ffffff) << 5) ^ u32::from(v);
         for (i, g) in GEN.iter().enumerate() {
-            if ((top >> i) & 1) != 0 { chk ^= g; }
+            if ((top >> i) & 1) != 0 {
+                chk ^= g;
+            }
         }
     }
     chk
@@ -107,7 +115,9 @@ fn convert_bits(data: &[u8], from: u8, to: u8) -> Vec<u8> {
             out.push(((acc >> bits) & maxv) as u8);
         }
     }
-    if bits != 0 { out.push(((acc << (to - bits)) & maxv) as u8); }
+    if bits != 0 {
+        out.push(((acc << (to - bits)) & maxv) as u8);
+    }
     out
 }
 
@@ -118,17 +128,23 @@ fn bech32m_encode(hrp: &str, payload: &[u8]) -> String {
     values.extend_from_slice(&[0; 6]);
     let pm = polymod(&values) ^ 0x2bc830a3;
     let checksum = (0..6).map(|i| ((pm >> (5 * (5 - i))) & 31) as u8);
+
     let mut out = String::with_capacity(hrp.len() + 1 + data.len() + 6);
     out.push_str(hrp);
     out.push('1');
-    for v in data { out.push(CHARSET[v as usize] as char); }
-    for v in checksum { out.push(CHARSET[v as usize] as char); }
+    for v in data {
+        out.push(CHARSET[v as usize] as char);
+    }
+    for v in checksum {
+        out.push(CHARSET[v as usize] as char);
+    }
     out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
 
     #[test]
     fn deterministic_seed_derivation() {
@@ -150,9 +166,37 @@ mod tests {
     #[test]
     fn signature_is_low_s() {
         let k = KeyPair::from_seed([7u8; 32]);
-        let digest = Sha256::digest(b"atc-wallet-test").into();
+        let digest: [u8; 32] = Sha256::digest(b"atc-wallet-test").into();
         let sig = k.sign_digest(&digest).unwrap();
         assert!(sig.normalize_s().is_none());
         assert_eq!(sig.to_bytes().len(), 64);
+    }
+
+    #[test]
+    fn shared_cross_language_vector_matches_json() {
+        let vector: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/vectors/wallet_v1.json")).unwrap();
+        let private_key = hex::decode(vector["private_key"].as_str().unwrap()).unwrap();
+        let digest = Sha256::digest(vector["message"].as_str().unwrap().as_bytes());
+        assert_eq!(
+            hex::encode(digest),
+            vector["digest_sha256"].as_str().unwrap()
+        );
+
+        let mut secret = [0u8; 32];
+        secret.copy_from_slice(&private_key);
+        let key = KeyPair::from_seed(secret);
+        let digest: [u8; 32] = digest.into();
+        let signature = key.sign_digest(&digest).unwrap();
+
+        assert_eq!(
+            hex::encode(key.public_key_bytes()),
+            vector["public_key_compressed"].as_str().unwrap()
+        );
+        assert_eq!(key.address(), vector["address"].as_str().unwrap());
+        assert_eq!(
+            hex::encode(signature.to_bytes()),
+            vector["signature_r_s"].as_str().unwrap()
+        );
     }
 }
