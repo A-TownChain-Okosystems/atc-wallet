@@ -2,12 +2,12 @@
 name = "atc_wallet"
 version = "0.2.0"
 edition = "2021"
-description = "A-TownChain wallet core — Ed25519 key management and transaction signing"
+description = "A-TownChain wallet core — secp256k1 key management and transaction signing"
 authors = ["A-TownChain-Okosystems"]
 license = "Apache-2.0"
 
 [dependencies]
-ed25519-dalek = "3.0"
+k256 = { version = "0.13", features = ["ecdsa"] }
 egui = "0.36"
 getrandom = "0.3"
 hex = "0.4"
