@@ -33,11 +33,16 @@ class CryptoUtils:
         if len(private_key) != 32 or len(digest) != 32:
             raise ValueError("private_key and digest must both be 32 bytes")
         key = SigningKey.from_string(private_key, curve=SECP256k1, hashfunc=hashlib.sha256)
-        return key.sign_digest_deterministic(
+        signature = key.sign_digest_deterministic(
             digest,
             hashfunc=hashlib.sha256,
             sigencode=sigencode_string,
         )
+        r, s = sigdecode_string(signature, key.curve.generator.order)
+        order = key.curve.generator.order
+        if s > order // 2:
+            s = order - s
+        return sigencode_string(r, s, order)
 
     @staticmethod
     def verify_signature(public_key: bytes, signature: bytes, digest: bytes) -> bool:
