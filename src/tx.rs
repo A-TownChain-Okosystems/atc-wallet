@@ -69,7 +69,7 @@ impl TransactionDomain {
     }
 
     pub fn sign(&self, tx: &Transaction, key: &SigningKey) -> Result<Signature, TxError> {
-        key.sign_prehash(&self.signing_digest(tx)?).map_err(|_| TxError::SigningFailed)
+        key.sign_prehash(&self.signing_digest(tx)?).map(|sig| sig.normalize_s().unwrap_or(sig)).map_err(|_| TxError::SigningFailed)
     }
 
     pub fn verify(
