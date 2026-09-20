@@ -1,7 +1,7 @@
 // Copyright (c) 2026 A-TownChain-Okosystems — Apache-2.0
-//! ATC-STD-600 transaction domain and deterministic signing preimage.
+//! ATC-STD-600 transaction domain and deterministic secp256k1 signing preimage.
 
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use k256::ecdsa::{signature::hazmat::{PrehashSigner, PrehashVerifier}, Signature, SigningKey, VerifyingKey};
 use sha2::{Digest, Sha256};
 
 pub const TX_DOMAIN: &str = "ATC-TX-DOMAIN";
@@ -25,11 +25,22 @@ pub struct Transaction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TxError { InvalidDomain, InvalidSignature, NonceOverflow }
+pub enum TxError { InvalidDomain, InvalidSignature, NonceOverflow, SigningFailed }
 
-#[derive(Debug, Clone, PartialEq, Eq)]\npub struct SignedTransaction {\n    pub transaction: Transaction,\n    pub public_key: VerifyingKey,\n    pub signature: Signature,\n}\n\nimpl TransactionDomain {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignedTransaction {
+    pub transaction: Transaction,
+    pub public_key: VerifyingKey,
+    pub signature: Signature,
+}
+
+impl TransactionDomain {
     pub fn validate(&self) -> Result<(), TxError> {
-        if self.chain_id != "atc" || !matches!(self.network_id.as_str(), "devnet" | "testnet" | "mainnet") || self.protocol_version.is_empty() || self.transaction_type.is_empty() {
+        if self.chain_id != "atc"
+            || !matches!(self.network_id.as_str(), "devnet" | "testnet" | "mainnet")
+            || self.protocol_version.is_empty()
+            || self.transaction_type.is_empty()
+        {
             return Err(TxError::InvalidDomain);
         }
         Ok(())
@@ -58,11 +69,18 @@ pub enum TxError { InvalidDomain, InvalidSignature, NonceOverflow }
     }
 
     pub fn sign(&self, tx: &Transaction, key: &SigningKey) -> Result<Signature, TxError> {
-        Ok(key.sign(&self.signing_digest(tx)?))
+        key.sign_prehash(&self.signing_digest(tx)?).map_err(|_| TxError::SigningFailed)
     }
 
-    pub fn verify(&self, tx: &Transaction, public_key: &VerifyingKey, signature: &Signature) -> Result<(), TxError> {
-        public_key.verify(&self.signing_digest(tx)?, signature).map_err(|_| TxError::InvalidSignature)
+    pub fn verify(
+        &self,
+        tx: &Transaction,
+        public_key: &VerifyingKey,
+        signature: &Signature,
+    ) -> Result<(), TxError> {
+        public_key
+            .verify_prehash(&self.signing_digest(tx)?, signature)
+            .map_err(|_| TxError::InvalidSignature)
     }
 }
 
@@ -82,26 +100,45 @@ mod tests {
     use super::*;
 
     fn domain() -> TransactionDomain {
-        TransactionDomain { chain_id: "atc".into(), network_id: "devnet".into(), protocol_version: "1.0.0".into(), transaction_type: "transfer".into() }
+        TransactionDomain {
+            chain_id: "atc".into(),
+            network_id: "devnet".into(),
+            protocol_version: "1.0.0".into(),
+            transaction_type: "transfer".into(),
+        }
     }
 
     fn tx() -> Transaction {
-        Transaction { nonce: 1, sender: vec![1; 32], recipient: vec![2; 32], value: 100, fee: 1, payload: b"hello".to_vec() }
+        Transaction {
+            nonce: 1,
+            sender: vec![1; 33],
+            recipient: vec![2; 33],
+            value: 100,
+            fee: 1,
+            payload: b"hello".to_vec(),
+        }
     }
 
     #[test]
     fn signature_roundtrip() {
         let d = domain();
         let t = tx();
-        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let key = SigningKey::from_bytes(&[7u8; 32].into()).unwrap();
         let sig = d.sign(&t, &key).unwrap();
         assert!(d.verify(&t, &key.verifying_key(), &sig).is_ok());
     }
 
     #[test]
+    fn signature_is_secp256k1_and_64_bytes() {
+        let d = domain();
+        let sig = d.sign(&tx(), &SigningKey::from_bytes(&[7u8; 32].into()).unwrap()).unwrap();
+        assert_eq!(sig.to_bytes().len(), 64);
+    }
+
+    #[test]
     fn network_replay_domain_isolation() {
         let t = tx();
-        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let key = SigningKey::from_bytes(&[7u8; 32].into()).unwrap();
         let sig = domain().sign(&t, &key).unwrap();
         let mut other = domain();
         other.network_id = "mainnet".into();
@@ -111,7 +148,7 @@ mod tests {
     #[test]
     fn payload_is_part_of_authenticated_data() {
         let d = domain();
-        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let key = SigningKey::from_bytes(&[7u8; 32].into()).unwrap();
         let sig = d.sign(&tx(), &key).unwrap();
         let mut altered = tx();
         altered.payload.push(0);
