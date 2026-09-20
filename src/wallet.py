@@ -37,19 +37,25 @@ def _hrp_expand(hrp):
     return [ord(c) >> 5 for c in hrp] + [0] + [ord(c) & 31 for c in hrp]
 
 
-def _convert_bits(data, from_bits, to_bits):
+def _convert_bits(data, from_bits, to_bits, pad=True):
     acc = 0
     bits = 0
     result = []
     max_value = (1 << to_bits) - 1
     for value in data:
+        if value < 0 or value >> from_bits:
+            raise ValueError("invalid bit-conversion value")
         acc = (acc << from_bits) | value
         bits += from_bits
         while bits >= to_bits:
             bits -= to_bits
             result.append((acc >> bits) & max_value)
     if bits:
-        result.append((acc << (to_bits - bits)) & max_value)
+        if not pad:
+            if bits >= from_bits or ((acc << (to_bits - bits)) & max_value):
+                raise ValueError("non-canonical Bech32 padding")
+        else:
+            result.append((acc << (to_bits - bits)) & max_value)
     return result
 
 
@@ -75,7 +81,7 @@ def decode_address(address):
     if _polymod(_hrp_expand(parts[0]) + values) != 0x2BC830A3:
         raise ValueError("invalid Bech32m checksum")
     data = values[:-6]
-    payload = bytes(_convert_bits(data, 5, 8))
+    payload = bytes(_convert_bits(data, 5, 8, pad=False))
     if len(payload) != ADDRESS_PAYLOAD_LEN:
         raise ValueError("invalid ATC address payload")
     return payload
