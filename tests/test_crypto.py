@@ -40,3 +40,17 @@ def test_python_signature_rejects_modified_digest():
         bytes.fromhex(tx["signature"]),
         bytes(digest),
     )
+
+
+def test_cross_language_vector():
+    import json
+    vector_path = Path(__file__).parent / "vectors" / "wallet_v1.json"
+    vector = json.loads(vector_path.read_text())
+    private_key = bytes.fromhex(vector["private_key"])
+    assert hashlib.sha256(vector["message"].encode()).hexdigest() == vector["digest_sha256"]
+    wallet = Wallet(private_key)
+    assert wallet.public_key.hex() == vector["public_key_compressed"]
+    assert wallet.address == vector["address"]
+    signature = CryptoUtils.sign_digest(private_key, bytes.fromhex(vector["digest_sha256"]))
+    assert signature.hex() == vector["signature_r_s"]
+    assert CryptoUtils.verify_signature(wallet.public_key, signature, bytes.fromhex(vector["digest_sha256"]))
