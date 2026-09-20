@@ -10,6 +10,22 @@ pub const ADDRESS_LEN: usize = 37; // "atc1" + 32 data chars + 6 checksum chars
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyPair {
     secret: [u8; 32],
+    #[test]
+    fn shared_cross_language_vector_matches() {
+        let k = KeyPair::from_seed([1u8; 32]);
+        let digest = Sha256::digest(b"atc-cross-language-vector-v1");
+        let sig = k.sign_digest(&digest.into()).unwrap();
+        assert_eq!(
+            hex::encode(k.public_key_bytes()),
+            "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+        );
+        assert_eq!(k.address(), "atc1pac4ht6afshdx2tctnhjnetz7u6g3j9zhhpqf3");
+        assert_eq!(
+            hex::encode(sig.to_bytes()),
+            "1f2773678b53c31890aa702760879c5cc2d1600f6025e7792d69348b457459f265d8c9c53125030d14e07faa01a1b3d72888f2a1c53668c43147940960f930d6"
+        );
+    }
+
 }
 
 impl KeyPair {
