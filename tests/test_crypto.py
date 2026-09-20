@@ -8,8 +8,8 @@ from ecdsa.util import sigdecode_string
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from crypto import CryptoUtils
-from wallet import Wallet
+from crypto import CryptoUtils  # noqa: E402
+from wallet import Wallet  # noqa: E402
 
 
 def test_python_wallet_uses_secp256k1_public_key_address():
