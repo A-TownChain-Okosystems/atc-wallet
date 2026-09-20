@@ -20,9 +20,9 @@ pub struct KeyPair {
         secret.copy_from_slice(&private_key);
         let k = KeyPair::from_seed(secret);
         let sig = k.sign_digest(&digest.into()).unwrap();
-        assert_eq!(hex::encode(k.public_key_bytes()), vector["public_key_compressed"]);
-        assert_eq!(k.address(), vector["address"]);
-        assert_eq!(hex::encode(sig.to_bytes()), vector["signature_r_s"]);
+        assert_eq!(hex::encode(k.public_key_bytes()), vector["public_key_compressed"].as_str().unwrap());
+        assert_eq!(k.address(), vector["address"].as_str().unwrap());
+        assert_eq!(hex::encode(sig.to_bytes()), vector["signature_r_s"].as_str().unwrap());
     }
 
 }
