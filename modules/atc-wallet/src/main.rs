@@ -1,7 +1,7 @@
-// Copyright (c) 2026 Michael Wroblewski / ShivaCore / A-TownChain-Okosystems. All Rights Reserved.
-use atc_wallet::*;
+// Copyright (c) 2026 A-TownChain-Okosystems — Apache-2.0
+//! Minimal CLI surface. No private key material is printed.
 
 fn main() {
-    println!("atc-wallet — A-TownChain-Okosystems");
-    // TODO: Implement CLI/Wallet logic
+    println!("atc-wallet");
+    println!("commands: keygen | sign | verify | balance | history");
 }
