@@ -1,11 +1,9 @@
-//! Desktop Wallet — Key-Management, TX-Signing, DeFi
+//! Canonical ATC wallet core.
 //!
-//! Part of the A-TownChain-Okosystems ecosystem.
-//! Copyright (c) Michael Wroblewski. All Rights Reserved.
+//! Architecture and specifications live outside this implementation module.
+//! This crate contains only executable wallet primitives.
 
-// Entry point in src/main.rs
-pub mod keys;
-pub mod tx;
-pub mod gui;
 pub mod balance;
 pub mod history;
+pub mod keys;
+pub mod tx;

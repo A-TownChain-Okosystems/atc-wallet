@@ -42,7 +42,6 @@ SKIP_DIRS = {
     "tests",
     "docs",
     "examples",
-    "tools/determinism_check.py",
 }
 
 
@@ -55,6 +54,10 @@ def scan_sources(root, lang):
             if not fn.endswith(ext):
                 continue
             path = os.path.join(dirpath, fn)
+            if os.path.normpath(path) == os.path.normpath(
+                os.path.join(root, "tools", "determinism_check.py")
+            ):
+                continue
             try:
                 with open(path, encoding="utf-8") as f:
                     for i, line in enumerate(f, 1):

@@ -17,4 +17,4 @@ jobs:
         with:
           python-version: '3.11'
       - name: Run ATC determinism gate
-        run: python3 tools/determinism_check.py --lang python --test-cmd "python3 -m pytest -q 2>/dev/null || python3 -m unittest discover -q"
+        run: python3 tools/determinism_check.py --lang rust --test-cmd "cargo test --workspace --quiet"
