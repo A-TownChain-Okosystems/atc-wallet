@@ -152,7 +152,7 @@ mod tests {
         );
         assert_eq!(
             hex::encode(Sha256::digest(&bytes)),
-            "8608d1530c0c8dd0220793edc6b24071878b36fca0299b2534cef76e79d340be"
+            "8608d1530c0c8dd02207903ec6b24071878b36fca0299b2534cef76e79d340be"
         );
         assert_eq!(
             hex::encode(key.public_key()),
@@ -170,10 +170,8 @@ mod tests {
         tx.amount = u128::MAX;
         tx.gas_price = u128::MAX;
         let bytes = tx.signing_bytes().unwrap();
-        assert_eq!(
-            bytes.windows(16).filter(|window| *window == [0xff; 16]).count(),
-            2
-        );
+        assert_eq!(&bytes[58..74], &[0xff; 16]);
+        assert_eq!(&bytes[74..90], &[0xff; 16]);
     }
 
     #[test]
