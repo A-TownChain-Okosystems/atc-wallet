@@ -51,7 +51,7 @@ impl WalletKey {
         let prehash = Sha256::digest(message);
         self.0
             .sign_prehash(&prehash)
-            .map(|signature: Signature| signature.normalize_s())
+            .map(|signature: Signature| signature.normalize_s().unwrap_or(signature))
             .map_err(|_| KeyError::SigningFailure)
     }
 
@@ -65,7 +65,7 @@ impl WalletKey {
         let signature =
             Signature::try_from(signature.as_slice()).map_err(|_| KeyError::InvalidSignature)?;
 
-        if signature.normalize_s() != signature {
+        if signature.normalize_s().is_some() {
             return Err(KeyError::HighS);
         }
 
@@ -110,7 +110,7 @@ mod tests {
     fn high_s_is_rejected() {
         let key = WalletKey::from_private_key_bytes(&[7u8; 32]).unwrap();
         let signature = key.sign(b"atc-wallet").unwrap();
-        assert_eq!(signature.normalize_s(), signature);
+        assert!(signature.normalize_s().is_none());
     }
 
     #[test]
