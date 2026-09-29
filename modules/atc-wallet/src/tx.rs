@@ -1,8 +1,7 @@
 // Copyright (c) 2026 A-TownChain-Okosystems — Apache-2.0
-//! Canonical ATC transaction construction, hashing and Ed25519 signing.
+//! Canonical ATC L1 transaction construction and signing.
 
 use crate::keys::{KeyError, WalletKey};
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use sha2::{Digest, Sha256};
 
 pub const NUMERIC_CHAIN_ID: u64 = 658467;
@@ -30,6 +29,7 @@ pub struct Transaction {
     pub nonce: u64,
     pub timestamp: u64,
     pub payload: Vec<u8>,
+    pub poh_hash: [u8; 32],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,13 +38,13 @@ pub enum TxError {
     EmptySender,
     PayloadTooLarge,
     InvalidSignature,
-    InvalidPublicKey,
+    SigningFailure,
 }
 
 impl Transaction {
     pub fn signing_bytes(&self) -> Result<Vec<u8>, TxError> {
         self.validate()?;
-        let mut out = Vec::with_capacity(128 + self.payload.len());
+        let mut out = Vec::with_capacity(160 + self.payload.len());
         out.extend_from_slice(TX_DOMAIN_V2);
         out.extend_from_slice(&self.chain_id.to_be_bytes());
         out.push(self.tx_type as u8);
@@ -64,6 +64,7 @@ impl Transaction {
         out.extend_from_slice(&self.nonce.to_be_bytes());
         out.extend_from_slice(&self.timestamp.to_be_bytes());
         put_bytes(&mut out, &self.payload);
+        out.extend_from_slice(&self.poh_hash);
         Ok(out)
     }
 
@@ -72,21 +73,21 @@ impl Transaction {
     }
 
     pub fn sign(&self, key: &WalletKey) -> Result<[u8; 64], TxError> {
-        Ok(key.sign(&self.signing_bytes()?).to_bytes())
+        Ok(key
+            .sign(&self.signing_bytes()?)
+            .map_err(|_| TxError::SigningFailure)?
+            .to_bytes()
+            .into())
     }
 
     pub fn verify(
         &self,
-        public_key: &[u8; 32],
+        public_key: &[u8; 33],
         signature: &[u8; 64],
     ) -> Result<(), TxError> {
         self.validate()?;
-        let key = VerifyingKey::from_bytes(public_key).map_err(|_| TxError::InvalidPublicKey)?;
-        key.verify(
-            &self.signing_bytes()?,
-            &Signature::from_bytes(signature),
-        )
-        .map_err(|_| TxError::InvalidSignature)
+        WalletKey::verify(public_key, &self.signing_bytes()?, signature)
+            .map_err(|_| TxError::InvalidSignature)
     }
 
     fn validate(&self) -> Result<(), TxError> {
@@ -106,9 +107,10 @@ impl Transaction {
 impl From<KeyError> for TxError {
     fn from(value: KeyError) -> Self {
         match value {
-            KeyError::InvalidPrivateKey => TxError::InvalidSignature,
-            KeyError::InvalidPublicKey => TxError::InvalidPublicKey,
-            KeyError::InvalidSignature => TxError::InvalidSignature,
+            KeyError::InvalidPrivateKey => TxError::SigningFailure,
+            KeyError::InvalidPublicKey => TxError::InvalidSignature,
+            KeyError::InvalidSignature | KeyError::HighS => TxError::InvalidSignature,
+            KeyError::SigningFailure => TxError::SigningFailure,
         }
     }
 }
@@ -134,40 +136,62 @@ mod tests {
             nonce: 7,
             timestamp: 1_700_000_000,
             payload: b"hello".to_vec(),
+            poh_hash: [9u8; 32],
         }
     }
 
     #[test]
-    fn signing_roundtrip() {
-        let key = WalletKey::from_seed([7u8; 32]);
+    fn canonical_vector_matches_v2_contract() {
+        let key = WalletKey::from_private_key_bytes(&[7u8; 32]).unwrap();
         let tx = tx();
-        let signature = tx.sign(&key).unwrap();
-        assert!(tx.verify(&key.public_key(), &signature).is_ok());
+        let bytes = tx.signing_bytes().unwrap();
+
+        assert_eq!(
+            hex::encode(&bytes),
+            "4154432d54582d444f4d41494e2d563200000000000a0c23000000000a4154432d73656e646572010000000d4154432d726563697069656e74000000000000000000000000000000640000000000000000000000000000000100000000000003e80000000000000007000000006553f1000000000568656c6c6f0909090909090909090909090909090909090909090909090909090909090909"
+        );
+        assert_eq!(
+            hex::encode(Sha256::digest(&bytes)),
+            "8608d1530c0c8dd0220793edc6b24071878b36fca0299b2534cef76e79d340be"
+        );
+        assert_eq!(
+            hex::encode(key.public_key()),
+            "025cbdf0646e5db4eaa398f365f2ea7a0e3d419b7e0330e39ce92bddedcac4f9bc"
+        );
+        assert_eq!(
+            hex::encode(tx.sign(&key).unwrap()),
+            "1c0661f2ecc4ccfca786e5a37a386191a62a301cd2449ce80089e3552220ccfc3a71cbb5903ba6f5df68690bc78ed389ec548f4e9ceef344e36abc7b3b643d78"
+        );
     }
 
     #[test]
-    fn amount_is_u128_in_canonical_preimage() {
+    fn u128_boundaries_are_serialized_as_fixed_16_byte_big_endian() {
         let mut tx = tx();
         tx.amount = u128::MAX;
-        assert!(tx.signing_bytes().is_ok());
+        tx.gas_price = u128::MAX;
+        let bytes = tx.signing_bytes().unwrap();
+        assert_eq!(
+            bytes.windows(16).filter(|window| *window == [0xff; 16]).count(),
+            2
+        );
     }
 
     #[test]
-    fn mutation_invalidates_signature() {
-        let key = WalletKey::from_seed([7u8; 32]);
-        let tx = tx();
-        let signature = tx.sign(&key).unwrap();
-        let mut altered = tx.clone();
-        altered.amount += 1;
-        assert!(altered.verify(&key.public_key(), &signature).is_err());
-    }
-
-    #[test]
-    fn wrong_chain_is_rejected() {
+    fn legacy_chain_id_is_rejected() {
         let mut tx = tx();
         tx.chain_id = 1;
-        let key = WalletKey::from_seed([7u8; 32]);
+        let key = WalletKey::from_private_key_bytes(&[7u8; 32]).unwrap();
         assert!(matches!(tx.sign(&key), Err(TxError::InvalidChainId)));
+    }
+
+    #[test]
+    fn payload_mutation_invalidates_signature() {
+        let key = WalletKey::from_private_key_bytes(&[7u8; 32]).unwrap();
+        let tx = tx();
+        let signature = tx.sign(&key).unwrap();
+        let mut altered = tx;
+        altered.payload.push(0);
+        assert!(altered.verify(&key.public_key(), &signature).is_err());
     }
 
     #[test]
