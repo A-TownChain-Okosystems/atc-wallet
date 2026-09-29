@@ -1,2 +1,201 @@
-// # Copyright (c) 2026 Michael Wroblewski / ShivaCore / A-TownChain-Okosystems. All Rights Reserved.
-//! `tx` — PLANNED (siehe COMPONENT_PLAN.md).noch nicht implementiert.
+// Copyright (c) 2026 A-TownChain-Okosystems — Apache-2.0
+//! Canonical ATC L1 transaction construction and signing.
+
+use crate::keys::{KeyError, WalletKey};
+use sha2::{Digest, Sha256};
+
+pub const NUMERIC_CHAIN_ID: u64 = 658467;
+pub const TX_DOMAIN_V2: &[u8] = b"ATC-TX-DOMAIN-V2";
+pub const MAX_PAYLOAD_BYTES: usize = 65_536;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum TxType {
+    Transfer = 0,
+    Stake = 1,
+    Unstake = 2,
+    Contract = 3,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Transaction {
+    pub chain_id: u64,
+    pub tx_type: TxType,
+    pub sender_did: String,
+    pub recipient_did: Option<String>,
+    pub amount: u128,
+    pub gas_price: u128,
+    pub gas_limit: u64,
+    pub nonce: u64,
+    pub timestamp: u64,
+    pub payload: Vec<u8>,
+    pub poh_hash: [u8; 32],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TxError {
+    InvalidChainId,
+    EmptySender,
+    PayloadTooLarge,
+    InvalidSignature,
+    SigningFailure,
+}
+
+impl Transaction {
+    pub fn signing_bytes(&self) -> Result<Vec<u8>, TxError> {
+        self.validate()?;
+        let mut out = Vec::with_capacity(160 + self.payload.len());
+        out.extend_from_slice(TX_DOMAIN_V2);
+        out.extend_from_slice(&self.chain_id.to_be_bytes());
+        out.push(self.tx_type as u8);
+        put_bytes(&mut out, self.sender_did.as_bytes());
+
+        match &self.recipient_did {
+            Some(value) => {
+                out.push(1);
+                put_bytes(&mut out, value.as_bytes());
+            }
+            None => out.push(0),
+        }
+
+        out.extend_from_slice(&self.amount.to_be_bytes());
+        out.extend_from_slice(&self.gas_price.to_be_bytes());
+        out.extend_from_slice(&self.gas_limit.to_be_bytes());
+        out.extend_from_slice(&self.nonce.to_be_bytes());
+        out.extend_from_slice(&self.timestamp.to_be_bytes());
+        put_bytes(&mut out, &self.payload);
+        out.extend_from_slice(&self.poh_hash);
+        Ok(out)
+    }
+
+    pub fn tx_hash(&self) -> Result<[u8; 32], TxError> {
+        Ok(Sha256::digest(self.signing_bytes()?).into())
+    }
+
+    pub fn sign(&self, key: &WalletKey) -> Result<[u8; 64], TxError> {
+        Ok(key
+            .sign(&self.signing_bytes()?)
+            .map_err(|_| TxError::SigningFailure)?
+            .to_bytes()
+            .into())
+    }
+
+    pub fn verify(
+        &self,
+        public_key: &[u8; 33],
+        signature: &[u8; 64],
+    ) -> Result<(), TxError> {
+        self.validate()?;
+        WalletKey::verify(public_key, &self.signing_bytes()?, signature)
+            .map_err(|_| TxError::InvalidSignature)
+    }
+
+    fn validate(&self) -> Result<(), TxError> {
+        if self.chain_id != NUMERIC_CHAIN_ID {
+            return Err(TxError::InvalidChainId);
+        }
+        if self.sender_did.is_empty() {
+            return Err(TxError::EmptySender);
+        }
+        if self.payload.len() > MAX_PAYLOAD_BYTES {
+            return Err(TxError::PayloadTooLarge);
+        }
+        Ok(())
+    }
+}
+
+impl From<KeyError> for TxError {
+    fn from(value: KeyError) -> Self {
+        match value {
+            KeyError::InvalidPrivateKey => TxError::SigningFailure,
+            KeyError::InvalidPublicKey => TxError::InvalidSignature,
+            KeyError::InvalidSignature | KeyError::HighS => TxError::InvalidSignature,
+            KeyError::SigningFailure => TxError::SigningFailure,
+        }
+    }
+}
+
+fn put_bytes(out: &mut Vec<u8>, value: &[u8]) {
+    out.extend_from_slice(&(value.len() as u32).to_be_bytes());
+    out.extend_from_slice(value);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tx() -> Transaction {
+        Transaction {
+            chain_id: NUMERIC_CHAIN_ID,
+            tx_type: TxType::Transfer,
+            sender_did: "ATC-sender".into(),
+            recipient_did: Some("ATC-recipient".into()),
+            amount: 100,
+            gas_price: 1,
+            gas_limit: 1_000,
+            nonce: 7,
+            timestamp: 1_700_000_000,
+            payload: b"hello".to_vec(),
+            poh_hash: [9u8; 32],
+        }
+    }
+
+    #[test]
+    fn canonical_vector_matches_v2_contract() {
+        let key = WalletKey::from_private_key_bytes(&[7u8; 32]).unwrap();
+        let tx = tx();
+        let bytes = tx.signing_bytes().unwrap();
+
+        assert_eq!(
+            hex::encode(&bytes),
+            "4154432d54582d444f4d41494e2d563200000000000a0c23000000000a4154432d73656e646572010000000d4154432d726563697069656e74000000000000000000000000000000640000000000000000000000000000000100000000000003e80000000000000007000000006553f1000000000568656c6c6f0909090909090909090909090909090909090909090909090909090909090909"
+        );
+        assert_eq!(
+            hex::encode(Sha256::digest(&bytes)),
+            "8608d1530c0c8dd02207903ec6b24071878b36fca0299b2534cef76e79d340be"
+        );
+        assert_eq!(
+            hex::encode(key.public_key()),
+            "02989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f"
+        );
+        assert_eq!(
+            hex::encode(tx.sign(&key).unwrap()),
+            "ed5942161b11f755616fff1415571151213e9dd31411547b5a30c46d401121291403db6d0c38ef9ce43c934652545d34d845c37ea6dffab199177c1240c92719"
+        );
+    }
+
+    #[test]
+    fn u128_boundaries_are_serialized_as_fixed_16_byte_big_endian() {
+        let mut tx = tx();
+        tx.amount = u128::MAX;
+        tx.gas_price = u128::MAX;
+        let bytes = tx.signing_bytes().unwrap();
+        assert_eq!(&bytes[57..73], &[0xff; 16]);
+        assert_eq!(&bytes[73..89], &[0xff; 16]);
+    }
+
+    #[test]
+    fn legacy_chain_id_is_rejected() {
+        let mut tx = tx();
+        tx.chain_id = 1;
+        let key = WalletKey::from_private_key_bytes(&[7u8; 32]).unwrap();
+        assert!(matches!(tx.sign(&key), Err(TxError::InvalidChainId)));
+    }
+
+    #[test]
+    fn payload_mutation_invalidates_signature() {
+        let key = WalletKey::from_private_key_bytes(&[7u8; 32]).unwrap();
+        let tx = tx();
+        let signature = tx.sign(&key).unwrap();
+        let mut altered = tx;
+        altered.payload.push(0);
+        assert!(altered.verify(&key.public_key(), &signature).is_err());
+    }
+
+    #[test]
+    fn oversized_payload_is_rejected() {
+        let mut tx = tx();
+        tx.payload = vec![0u8; MAX_PAYLOAD_BYTES + 1];
+        assert!(matches!(tx.tx_hash(), Err(TxError::PayloadTooLarge)));
+    }
+}
