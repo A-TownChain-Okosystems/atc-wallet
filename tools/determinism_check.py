@@ -103,6 +103,19 @@ def main():
             if args.lang == "rust"
             else "python3 -m pytest -q 2>/dev/null || python3 -m unittest discover -q"
         )
+        # Warm up the build once so compiler/cache diagnostics cannot contaminate
+        # the two measured test outputs. The warm-up result is not evidence and is
+        # deliberately not counted as one of the two deterministic runs.
+        warmup_rc, _ = run_tests(cmd, root)
+        if warmup_rc != 0:
+            ok = False
+            print(
+                f"  FINDING: Warm-up/Test-Build schlägt fehl (rc={warmup_rc}) — "
+                "Determinismus nicht prüfbar (Fail Closed)"
+            )
+            print("DETERMINISM GATE:", "PASS" if ok else "FAIL")
+            sys.exit(1)
+
         rc1, out1 = run_tests(cmd, root)
         rc2, out2 = run_tests(cmd, root)
         if rc1 != 0 or rc2 != 0:
