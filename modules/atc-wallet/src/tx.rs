@@ -156,11 +156,11 @@ mod tests {
         );
         assert_eq!(
             hex::encode(key.public_key()),
-            "025cbdf0646e5db4eaa398f365f2ea7a0e3d419b7e0330e39ce92bddedcac4f9bc"
+            "02989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f"
         );
         assert_eq!(
             hex::encode(tx.sign(&key).unwrap()),
-            "1c0661f2ecc4ccfca786e5a37a386191a62a301cd2449ce80089e3552220ccfc3a71cbb5903ba6f5df68690bc78ed389ec548f4e9ceef344e36abc7b3b643d78"
+            "ed5942161b11f755616fff1415571151213e9dd31411547b5a30c46d401121291403db6d0c38ef9ce43c934652545d34d845c37ea6dffab199177c1240c92719"
         );
     }
 
