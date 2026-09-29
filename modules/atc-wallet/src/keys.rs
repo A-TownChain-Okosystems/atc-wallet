@@ -1,56 +1,76 @@
-// Copyright (c) 2026 Michael Wroblewski / ShivaCore / A-TownChain-Okosystems. All Rights Reserved.
-//! Trusted Ed25519 key management for the canonical ATC wallet core.
+// Copyright (c) 2026 A-TownChain-Okosystems — Apache-2.0
+//! Trusted secp256k1 transaction/account key management.
 //!
-//! Private key material is kept in this module's Rust types and is never
-//! formatted through Debug/Display. Higher layers should pass only public
-//! material or signatures across their boundaries.
+//! Transaction signatures use ECDSA/secp256k1 with RFC6979 deterministic
+//! nonce generation, SHA-256 prehashing and mandatory low-S normalization.
 
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use k256::ecdsa::{
+    signature::hazmat::{PrehashSigner, PrehashVerifier},
+    Signature, SigningKey, VerifyingKey,
+};
+use sha2::{Digest, Sha256};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+pub const PRIVATE_KEY_LEN: usize = 32;
+pub const PUBLIC_KEY_LEN: usize = 33;
+pub const SIGNATURE_LEN: usize = 64;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyError {
     InvalidPrivateKey,
     InvalidPublicKey,
     InvalidSignature,
+    HighS,
+    SigningFailure,
 }
 
-#[derive(Clone)]
-pub struct WalletKey {
-    signing_key: SigningKey,
-}
+pub struct WalletKey(SigningKey);
 
 impl WalletKey {
-    /// Construct a key from exactly 32 bytes of seed material.
-    pub fn from_seed(seed: [u8; 32]) -> Self {
-        Self {
-            signing_key: SigningKey::from_bytes(&seed),
-        }
+    pub fn from_private_key_bytes(bytes: &[u8; PRIVATE_KEY_LEN]) -> Result<Self, KeyError> {
+        SigningKey::from_bytes(bytes.into())
+            .map(Self)
+            .map_err(|_| KeyError::InvalidPrivateKey)
     }
 
-    /// Generate a key using operating-system CSPRNG entropy.
     pub fn generate() -> Result<Self, KeyError> {
-        let mut seed = [0u8; 32];
-        getrandom::fill(&mut seed).map_err(|_| KeyError::InvalidPrivateKey)?;
-        Ok(Self::from_seed(seed))
+        let mut bytes = [0u8; PRIVATE_KEY_LEN];
+        getrandom::fill(&mut bytes).map_err(|_| KeyError::InvalidPrivateKey)?;
+        Self::from_private_key_bytes(&bytes)
     }
 
-    pub fn public_key(&self) -> [u8; 32] {
-        self.signing_key.verifying_key().to_bytes()
+    pub fn public_key(&self) -> [u8; PUBLIC_KEY_LEN] {
+        self.0
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .try_into()
+            .expect("compressed secp256k1 public key is exactly 33 bytes")
     }
 
-    pub fn sign(&self, message: &[u8]) -> Signature {
-        self.signing_key.sign(message)
+    pub fn sign(&self, message: &[u8]) -> Result<Signature, KeyError> {
+        let prehash = Sha256::digest(message);
+        self.0
+            .sign_prehash(&prehash)
+            .map(|signature: Signature| signature.normalize_s())
+            .map_err(|_| KeyError::SigningFailure)
     }
 
     pub fn verify(
-        public_key: &[u8; 32],
+        public_key: &[u8; PUBLIC_KEY_LEN],
         message: &[u8],
-        signature: &[u8; 64],
+        signature: &[u8; SIGNATURE_LEN],
     ) -> Result<(), KeyError> {
         let key =
-            VerifyingKey::from_bytes(public_key).map_err(|_| KeyError::InvalidPublicKey)?;
-        let signature = Signature::from_bytes(signature);
-        key.verify(message, &signature)
+            VerifyingKey::from_sec1_bytes(public_key).map_err(|_| KeyError::InvalidPublicKey)?;
+        let signature =
+            Signature::try_from(signature.as_slice()).map_err(|_| KeyError::InvalidSignature)?;
+
+        if signature.normalize_s() != signature {
+            return Err(KeyError::HighS);
+        }
+
+        let prehash = Sha256::digest(message);
+        key.verify_prehash(&prehash, &signature)
             .map_err(|_| KeyError::InvalidSignature)
     }
 }
@@ -69,22 +89,39 @@ mod tests {
 
     #[test]
     fn deterministic_seed_derives_stable_public_key() {
-        let a = WalletKey::from_seed([7u8; 32]);
-        let b = WalletKey::from_seed([7u8; 32]);
+        let a = WalletKey::from_private_key_bytes(&[7u8; 32]).unwrap();
+        let b = WalletKey::from_private_key_bytes(&[7u8; 32]).unwrap();
         assert_eq!(a.public_key(), b.public_key());
     }
 
     #[test]
     fn sign_and_verify_roundtrip() {
-        let key = WalletKey::from_seed([7u8; 32]);
-        let signature = key.sign(b"atc-wallet");
-        assert!(WalletKey::verify(&key.public_key(), b"atc-wallet", &signature.to_bytes()).is_ok());
+        let key = WalletKey::from_private_key_bytes(&[7u8; 32]).unwrap();
+        let signature = key.sign(b"atc-wallet").unwrap();
+        assert!(WalletKey::verify(
+            &key.public_key(),
+            b"atc-wallet",
+            &signature.to_bytes().into()
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn high_s_is_rejected() {
+        let key = WalletKey::from_private_key_bytes(&[7u8; 32]).unwrap();
+        let signature = key.sign(b"atc-wallet").unwrap();
+        assert_eq!(signature.normalize_s(), signature);
     }
 
     #[test]
     fn modified_message_is_rejected() {
-        let key = WalletKey::from_seed([7u8; 32]);
-        let signature = key.sign(b"atc-wallet");
-        assert!(WalletKey::verify(&key.public_key(), b"tampered", &signature.to_bytes()).is_err());
+        let key = WalletKey::from_private_key_bytes(&[7u8; 32]).unwrap();
+        let signature = key.sign(b"atc-wallet").unwrap();
+        assert!(WalletKey::verify(
+            &key.public_key(),
+            b"tampered",
+            &signature.to_bytes().into()
+        )
+        .is_err());
     }
 }
