@@ -1,120 +1,187 @@
 // Copyright (c) 2026 A-TownChain-Okosystems — Apache-2.0
-//! ATC-STD-600 transaction domain and deterministic signing preimage.
+//! Canonical ATC-TX-DOMAIN-V2 transaction signing.
+//!
+//! Consensus/account signatures use secp256k1 ECDSA with RFC6979,
+//! SHA-256 and low-S normalization. The authenticated transaction amount
+//! is u128 and is encoded as exactly 16 big-endian bytes.
 
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use k256::ecdsa::{
+    signature::{DigestSigner, DigestVerifier},
+    Signature, SigningKey, VerifyingKey,
+};
 use sha2::{Digest, Sha256};
 
-pub const TX_DOMAIN: &str = "ATC-TX-DOMAIN";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TransactionDomain {
-    pub chain_id: String,
-    pub network_id: String,
-    pub protocol_version: String,
-    pub transaction_type: String,
-}
+pub const NUMERIC_CHAIN_ID: u64 = 658467;
+pub const TX_DOMAIN_V2: &[u8] = b"ATC-TX-DOMAIN-V2";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Transaction {
-    pub nonce: u64,
+    pub chain_id: u64,
+    pub tx_type: u8,
     pub sender: Vec<u8>,
-    pub recipient: Vec<u8>,
-    pub value: u64,
-    pub fee: u64,
+    pub recipient: Option<Vec<u8>>,
+    pub amount: u128,
+    pub gas_price: u64,
+    pub gas_limit: u64,
+    pub nonce: u64,
+    pub timestamp: u64,
     pub payload: Vec<u8>,
+    pub poh_hash: [u8; 32],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TxError { InvalidDomain, InvalidSignature, NonceOverflow }
+pub enum TxError {
+    InvalidChainId,
+    InvalidSender,
+    InvalidSignature,
+}
 
-#[derive(Debug, Clone, PartialEq, Eq)]\npub struct SignedTransaction {\n    pub transaction: Transaction,\n    pub public_key: VerifyingKey,\n    pub signature: Signature,\n}\n\nimpl TransactionDomain {
-    pub fn validate(&self) -> Result<(), TxError> {
-        if self.chain_id != "atc" || !matches!(self.network_id.as_str(), "devnet" | "testnet" | "mainnet") || self.protocol_version.is_empty() || self.transaction_type.is_empty() {
-            return Err(TxError::InvalidDomain);
+impl Transaction {
+    pub fn signing_bytes(&self) -> Result<Vec<u8>, TxError> {
+        if self.chain_id != NUMERIC_CHAIN_ID {
+            return Err(TxError::InvalidChainId);
         }
-        Ok(())
+        if self.sender.is_empty() {
+            return Err(TxError::InvalidSender);
+        }
+
+        let mut out = Vec::with_capacity(160 + self.payload.len());
+        out.extend_from_slice(TX_DOMAIN_V2);
+        out.extend_from_slice(&self.chain_id.to_be_bytes());
+        out.push(self.tx_type);
+        put_bytes_u32(&mut out, &self.sender);
+
+        match &self.recipient {
+            Some(value) => {
+                out.push(1);
+                put_bytes_u32(&mut out, value);
+            }
+            None => out.push(0),
+        }
+
+        out.extend_from_slice(&self.amount.to_be_bytes());
+        out.extend_from_slice(&self.gas_price.to_be_bytes());
+        out.extend_from_slice(&self.gas_limit.to_be_bytes());
+        out.extend_from_slice(&self.nonce.to_be_bytes());
+        out.extend_from_slice(&self.timestamp.to_be_bytes());
+        put_bytes_u32(&mut out, &self.payload);
+        out.extend_from_slice(&self.poh_hash);
+        Ok(out)
     }
 
-    pub fn signing_preimage(&self, tx: &Transaction) -> Result<Vec<u8>, TxError> {
-        self.validate()?;
-        let fields: [(&str, &[u8]); 11] = [
-            ("domain", TX_DOMAIN.as_bytes()),
-            ("chain_id", self.chain_id.as_bytes()),
-            ("network_id", self.network_id.as_bytes()),
-            ("protocol_version", self.protocol_version.as_bytes()),
-            ("transaction_type", self.transaction_type.as_bytes()),
-            ("nonce", &tx.nonce.to_be_bytes()),
-            ("sender", &tx.sender),
-            ("recipient", &tx.recipient),
-            ("value", &tx.value.to_be_bytes()),
-            ("fee", &tx.fee.to_be_bytes()),
-            ("payload", &tx.payload),
-        ];
-        Ok(canonical_fields(&fields))
+    pub fn signing_digest(&self) -> Result<Sha256, TxError> {
+        Ok(Sha256::new_with_prefix(self.signing_bytes()?))
     }
 
-    pub fn signing_digest(&self, tx: &Transaction) -> Result<[u8; 32], TxError> {
-        Ok(Sha256::digest(self.signing_preimage(tx)?).into())
+    pub fn sign(&self, key: &SigningKey) -> Result<Signature, TxError> {
+        let digest = self.signing_digest()?;
+        let signature: Signature = key.sign_digest(digest);
+        Ok(signature.normalize_s().unwrap_or(signature))
     }
 
-    pub fn sign(&self, tx: &Transaction, key: &SigningKey) -> Result<Signature, TxError> {
-        Ok(key.sign(&self.signing_digest(tx)?))
+    pub fn verify(
+        &self,
+        public_key: &VerifyingKey,
+        signature: &Signature,
+    ) -> Result<(), TxError> {
+        let digest = self.signing_digest()?;
+        public_key
+            .verify_digest(digest, signature)
+            .map_err(|_| TxError::InvalidSignature)
     }
 
-    pub fn verify(&self, tx: &Transaction, public_key: &VerifyingKey, signature: &Signature) -> Result<(), TxError> {
-        public_key.verify(&self.signing_digest(tx)?, signature).map_err(|_| TxError::InvalidSignature)
+    pub fn compressed_public_key(public_key: &VerifyingKey) -> [u8; 33] {
+        let encoded = public_key.to_encoded_point(true);
+        let bytes = encoded.as_bytes();
+        let mut out = [0u8; 33];
+        out.copy_from_slice(bytes);
+        out
     }
 }
 
-fn canonical_fields(fields: &[(&str, &[u8])]) -> Vec<u8> {
-    let mut out = Vec::new();
-    for (key, value) in fields {
-        out.extend_from_slice(&(key.len() as u32).to_be_bytes());
-        out.extend_from_slice(key.as_bytes());
-        out.extend_from_slice(&(value.len() as u64).to_be_bytes());
-        out.extend_from_slice(value);
-    }
-    out
+fn put_bytes_u32(out: &mut Vec<u8>, value: &[u8]) {
+    out.extend_from_slice(&(value.len() as u32).to_be_bytes());
+    out.extend_from_slice(value);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn domain() -> TransactionDomain {
-        TransactionDomain { chain_id: "atc".into(), network_id: "devnet".into(), protocol_version: "1.0.0".into(), transaction_type: "transfer".into() }
-    }
+    const GOLDEN_HEX: &str = "4154432d54582d444f4d41494e2d563200000000000a0c23000000000a4154432d73656e646572010000000d4154432d726563697069656e74ffffffffffffffffffffffffffffffff000000000000000100000000000003e80000000000000007000000006553f1000000000568656c6c6f0909090909090909090909090909090909090909090909090909090909090909";
 
     fn tx() -> Transaction {
-        Transaction { nonce: 1, sender: vec![1; 32], recipient: vec![2; 32], value: 100, fee: 1, payload: b"hello".to_vec() }
+        Transaction {
+            chain_id: NUMERIC_CHAIN_ID,
+            tx_type: 0,
+            sender: b"ATC-sender".to_vec(),
+            recipient: Some(b"ATC-recipient".to_vec()),
+            amount: u128::MAX,
+            gas_price: 1,
+            gas_limit: 1000,
+            nonce: 7,
+            timestamp: 1_700_000_000,
+            payload: b"hello".to_vec(),
+            poh_hash: [9u8; 32],
+        }
     }
 
     #[test]
-    fn signature_roundtrip() {
-        let d = domain();
-        let t = tx();
-        let key = SigningKey::from_bytes(&[7u8; 32]);
-        let sig = d.sign(&t, &key).unwrap();
-        assert!(d.verify(&t, &key.verifying_key(), &sig).is_ok());
+    fn canonical_tx_v2_golden_vector_is_byte_exact() {
+        let actual = tx()
+            .signing_bytes()
+            .unwrap()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        assert_eq!(actual, GOLDEN_HEX);
     }
 
     #[test]
-    fn network_replay_domain_isolation() {
-        let t = tx();
-        let key = SigningKey::from_bytes(&[7u8; 32]);
-        let sig = domain().sign(&t, &key).unwrap();
-        let mut other = domain();
-        other.network_id = "mainnet".into();
-        assert!(other.verify(&t, &key.verifying_key(), &sig).is_err());
+    fn u128_is_fixed_16_byte_big_endian() {
+        let bytes = tx().signing_bytes().unwrap();
+        let offset = TX_DOMAIN_V2.len() + 8 + 1 + 4 + 10 + 1 + 4 + 13;
+        assert_eq!(&bytes[offset..offset + 16], &[0xff; 16]);
     }
 
     #[test]
-    fn payload_is_part_of_authenticated_data() {
-        let d = domain();
-        let key = SigningKey::from_bytes(&[7u8; 32]);
-        let sig = d.sign(&tx(), &key).unwrap();
-        let mut altered = tx();
-        altered.payload.push(0);
-        assert!(d.verify(&altered, &key.verifying_key(), &sig).is_err());
+    fn signature_roundtrip_and_compressed_key() {
+        let key = SigningKey::from_bytes((&[7u8; 32]).into()).unwrap();
+        let tx = tx();
+        let sig = tx.sign(&key).unwrap();
+        assert!(tx.verify(&key.verifying_key(), &sig).is_ok());
+        assert_eq!(TxSignature::is_low_s(&sig), true);
+        assert_eq!(Transaction::compressed_public_key(&key.verifying_key()).len(), 33);
+    }
+
+    #[test]
+    fn mutation_invalidates_signature() {
+        let key = SigningKey::from_bytes((&[7u8; 32]).into()).unwrap();
+        let tx = tx();
+        let sig = tx.sign(&key).unwrap();
+        let mut altered = tx.clone();
+        altered.amount -= 1;
+        assert!(altered.verify(&key.verifying_key(), &sig).is_err());
+    }
+
+    #[test]
+    fn wrong_chain_is_rejected() {
+        let mut tx = tx();
+        tx.chain_id = 1;
+        let key = SigningKey::from_bytes((&[7u8; 32]).into()).unwrap();
+        assert!(matches!(tx.sign(&key), Err(TxError::InvalidChainId)));
+    }
+
+    #[test]
+    fn legacy_domain_is_not_present() {
+        assert_ne!(TX_DOMAIN_V2, b"ATC-TX-DOMAIN");
+    }
+}
+
+struct TxSignature;
+
+impl TxSignature {
+    fn is_low_s(signature: &Signature) -> bool {
+        signature.normalize_s().is_none()
     }
 }

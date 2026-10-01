@@ -1,19 +1,18 @@
 # Copyright (c) 2026 Michael Wroblewski / ShivaCore / A-TownChain-Okosystems. All Rights Reserved.
-"""ATC Wallet — Core wallet implementation.
-ATC-prefixed addresses with SHA-256 derivation and ECDSA signing.
+"""Legacy/reference wallet helpers.
+
+Wallet creation is deterministic at this boundary: callers provide the private
+key material. Consensus transaction signing is implemented by src/tx.rs.
 """
 
 import hashlib
 import json
-import os
 
 ATC_PREFIX = "ATC"
-ADDRESS_LENGTH = 35  # ATC + 32 hex chars
+ADDRESS_LENGTH = 35
 
 
 class Wallet:
-    """ATC wallet with ECDSA signing and SHA-256 address derivation."""
-
     def __init__(self, private_key: bytes):
         self.private_key = private_key
         self.address = self._derive_address(private_key)
@@ -22,25 +21,22 @@ class Wallet:
 
     @staticmethod
     def _derive_address(private_key: bytes) -> str:
-        """Derive ATC address from private key using SHA-256."""
         public_hash = hashlib.sha256(private_key).hexdigest()
         return f"{ATC_PREFIX}{public_hash[:32]}"
 
     @staticmethod
     def is_valid_address(address: str) -> bool:
-        """Check if address starts with ATC and has correct length."""
         return (
             address.startswith(ATC_PREFIX)
             and len(address) == ADDRESS_LENGTH
             and all(c in "0123456789abcdef" for c in address[3:])
         )
 
-    def sign_transaction(self, to: str, amount: float, fee: float = 0.001) -> dict:
-        """Create and sign a transaction."""
+    def sign_transaction(self, to: str, amount: int, fee: int = 0) -> dict:
         if not self.is_valid_address(to):
             raise ValueError(f"Invalid recipient address: {to}")
-        if amount + fee > self.balance:
-            raise ValueError("Insufficient balance")
+        if amount < 0 or fee < 0 or amount + fee > self.balance:
+            raise ValueError("invalid or insufficient balance")
 
         tx = {
             "from": self.address,
@@ -49,17 +45,19 @@ class Wallet:
             "fee": fee,
             "nonce": self.nonce,
         }
-        tx_hash = hashlib.sha256(json.dumps(tx, sort_keys=True).encode()).hexdigest()
+        tx_hash = hashlib.sha256(
+            json.dumps(tx, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
         tx["hash"] = tx_hash
         self.nonce += 1
         return tx
 
-    def receive(self, amount: float) -> None:
-        """Add received amount to balance."""
+    def receive(self, amount: int) -> None:
+        if amount < 0:
+            raise ValueError("amount must be non-negative")
         self.balance += amount
 
     def to_dict(self) -> dict:
-        """Serialize wallet to dict."""
         return {
             "address": self.address,
             "balance": self.balance,
@@ -67,13 +65,8 @@ class Wallet:
         }
 
 
-def generate_wallet() -> Wallet:
-    """Generate a new random wallet."""
-    private_key = hashlib.sha256(os.urandom(32)).digest()
+def generate_wallet(private_key: bytes) -> Wallet:
+    """Create a wallet from caller-provided private-key material."""
+    if len(private_key) != 32:
+        raise ValueError("private_key must be exactly 32 bytes")
     return Wallet(private_key)
-
-
-if __name__ == "__main__":
-    wallet = generate_wallet()
-    print(f"Address: {wallet.address}")
-    print(f"Valid: {Wallet.is_valid_address(wallet.address)}")

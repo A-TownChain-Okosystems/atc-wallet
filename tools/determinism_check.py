@@ -42,7 +42,6 @@ SKIP_DIRS = {
     "tests",
     "docs",
     "examples",
-    "tools/determinism_check.py",
 }
 
 
@@ -55,12 +54,18 @@ def scan_sources(root, lang):
             if not fn.endswith(ext):
                 continue
             path = os.path.join(dirpath, fn)
+            if os.path.normpath(os.path.relpath(path, root)) == os.path.normpath(
+                "tools/determinism_check.py"
+            ):
+                continue
             try:
                 with open(path, encoding="utf-8") as f:
                     for i, line in enumerate(f, 1):
                         for pat, desc in PATTERNS[lang]:
                             if re.search(pat, line):
-                                findings.append(f"{path}:{i}: {desc}: {line.strip()[:80]}")
+                                findings.append(
+                                    f"{path}:{i}: {desc}: {line.strip()[:80]}"
+                                )
             except (OSError, UnicodeDecodeError):
                 continue
     return findings
