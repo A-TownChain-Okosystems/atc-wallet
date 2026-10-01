@@ -1,6 +1,5 @@
 # Copyright (c) 2026 Michael Wroblewski / ShivaCore / A-TownChain-Okosystems. All Rights Reserved.
 import json
-import time
 
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, serialization
@@ -8,27 +7,22 @@ from cryptography.hazmat.primitives.asymmetric import ec
 
 
 class ECDSASigner:
-    """
-    ECDSA secp256k1 Signatur-System fuer A-TownChain OS.
-    Issue #6 — Sichere TX-Autorisierung.
+    """Legacy/reference ECDSA helper.
 
-    Alle Transfers und NFT-Transaktionen muessen mit dem
-    Private Key des Senders signiert und verifiziert werden.
+    Deterministic transaction construction requires nonce and timestamp to be
+    supplied by the caller. This module is not the canonical consensus signer;
+    canonical L1 signing lives in src/tx.rs.
     """
 
     @staticmethod
     def generate_keypair() -> tuple:
-        """Generiert ein neues ECDSA secp256k1 Schluesselpaar.
-        Returns: (private_key_hex: str, public_key_hex: str)
-        WICHTIG: Private Key nur einmal anzeigen, niemals speichern!
-        """
         priv_key = ec.generate_private_key(ec.SECP256K1(), default_backend())
         priv_hex = format(priv_key.private_numbers().private_value, "064x")
         pub_hex = (
             priv_key.public_key()
             .public_bytes(
                 serialization.Encoding.X962,
-                serialization.PublicFormat.UncompressedPoint,
+                serialization.PublicFormat.CompressedPoint,
             )
             .hex()
         )
@@ -36,13 +30,7 @@ class ECDSASigner:
 
     @staticmethod
     def sign(tx_data: dict, private_key_hex: str) -> str:
-        """Signiert eine Transaktion mit dem Private Key.
-        Args:
-            tx_data:         TX-Dict (from, to, amount, fee, nonce, timestamp)
-            private_key_hex: 64-char hex Private Key
-        Returns: DER-kodierte Signatur als hex string
-        """
-        message = json.dumps(tx_data, sort_keys=True).encode()
+        message = json.dumps(tx_data, sort_keys=True, separators=(",", ":")).encode()
         priv_key = ec.derive_private_key(
             int(private_key_hex, 16), ec.SECP256K1(), default_backend()
         )
@@ -50,15 +38,14 @@ class ECDSASigner:
 
     @staticmethod
     def verify(tx_data: dict, signature_hex: str, public_key_hex: str) -> bool:
-        """Verifiziert eine TX-Signatur.
-        Returns: True wenn gueltig, False wenn manipuliert/ungueltig
-        """
         try:
-            message = json.dumps(tx_data, sort_keys=True).encode()
+            message = json.dumps(tx_data, sort_keys=True, separators=(",", ":")).encode()
             public_key = ec.EllipticCurvePublicKey.from_encoded_point(
                 ec.SECP256K1(), bytes.fromhex(public_key_hex)
             )
-            public_key.verify(bytes.fromhex(signature_hex), message, ec.ECDSA(hashes.SHA256()))
+            public_key.verify(
+                bytes.fromhex(signature_hex), message, ec.ECDSA(hashes.SHA256())
+            )
             return True
         except Exception:
             return False
@@ -67,18 +54,18 @@ class ECDSASigner:
     def build_tx(
         from_addr: str,
         to_addr: str,
-        amount: float,
-        fee: float = 0.001,
-        nonce: int = None,
+        amount: int,
+        fee: int,
+        nonce: int,
+        timestamp: int,
     ) -> dict:
-        """Erstellt ein standardisiertes TX-Dict (vor dem Signieren).
-        Der Nonce verhindert Replay-Attacks.
-        """
+        if amount < 0 or fee < 0 or nonce < 0 or timestamp < 0:
+            raise ValueError("transaction numeric fields must be non-negative")
         return {
             "from": from_addr,
             "to": to_addr,
-            "amount": float(amount),
+            "amount": amount,
             "fee": fee,
-            "nonce": nonce or int(time.time() * 1000),
-            "timestamp": int(time.time()),
+            "nonce": nonce,
+            "timestamp": timestamp,
         }
