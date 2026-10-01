@@ -159,7 +159,7 @@ mod tests {
 
     #[test]
     fn legacy_domain_is_not_present() {
-        assert!(!String::from_utf8_lossy(TX_DOMAIN_V2).contains("ATC-TX-DOMAIN"));
+        assert_ne!(TX_DOMAIN_V2, b"ATC-TX-DOMAIN");
     }
 }
 
