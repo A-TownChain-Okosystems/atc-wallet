@@ -68,7 +68,7 @@ class Wallet:
 
 
 def generate_wallet() -> Wallet:
-    """Generate a new random wallet."""
+    """Generate a new wallet."""
     private_key = hashlib.sha256(os.urandom(32)).digest()
     return Wallet(private_key)
 
