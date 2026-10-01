@@ -26,13 +26,13 @@ pub struct Transaction {
     pub nonce: u64,
     pub timestamp: u64,
     pub payload: Vec<u8>,
+    pub poh_hash: [u8; 32],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TxError {
     InvalidChainId,
     InvalidSender,
-    InvalidRecipient,
     InvalidSignature,
 }
 
@@ -45,7 +45,7 @@ impl Transaction {
             return Err(TxError::InvalidSender);
         }
 
-        let mut out = Vec::with_capacity(128 + self.payload.len());
+        let mut out = Vec::with_capacity(160 + self.payload.len());
         out.extend_from_slice(TX_DOMAIN_V2);
         out.extend_from_slice(&self.chain_id.to_be_bytes());
         out.push(self.tx_type);
@@ -65,6 +65,7 @@ impl Transaction {
         out.extend_from_slice(&self.nonce.to_be_bytes());
         out.extend_from_slice(&self.timestamp.to_be_bytes());
         put_bytes_u32(&mut out, &self.payload);
+        out.extend_from_slice(&self.poh_hash);
         Ok(out)
     }
 
@@ -107,25 +108,39 @@ fn put_bytes_u32(out: &mut Vec<u8>, value: &[u8]) {
 mod tests {
     use super::*;
 
+    const GOLDEN_HEX: &str = "4154432d54582d444f4d41494e2d563200000000000a0c23000000000a4154432d73656e646572010000000d4154432d726563697069656e74ffffffffffffffffffffffffffffffff000000000000000100000000000003e80000000000000007000000006553f1000000000568656c6c6f0909090909090909090909090909090909090909090909090909090909090909";
+
     fn tx() -> Transaction {
         Transaction {
             chain_id: NUMERIC_CHAIN_ID,
             tx_type: 0,
-            sender: vec![1; 33],
-            recipient: Some(vec![2; 33]),
+            sender: b"ATC-sender".to_vec(),
+            recipient: Some(b"ATC-recipient".to_vec()),
             amount: u128::MAX,
             gas_price: 1,
             gas_limit: 1000,
             nonce: 7,
             timestamp: 1_700_000_000,
             payload: b"hello".to_vec(),
+            poh_hash: [9u8; 32],
         }
+    }
+
+    #[test]
+    fn canonical_tx_v2_golden_vector_is_byte_exact() {
+        let actual = tx()
+            .signing_bytes()
+            .unwrap()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        assert_eq!(actual, GOLDEN_HEX);
     }
 
     #[test]
     fn u128_is_fixed_16_byte_big_endian() {
         let bytes = tx().signing_bytes().unwrap();
-        let offset = TX_DOMAIN_V2.len() + 8 + 1 + 4 + 33 + 1 + 4 + 33;
+        let offset = TX_DOMAIN_V2.len() + 8 + 1 + 4 + 10 + 1 + 4 + 13;
         assert_eq!(&bytes[offset..offset + 16], &[0xff; 16]);
     }
 
