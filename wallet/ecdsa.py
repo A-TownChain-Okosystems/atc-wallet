@@ -43,9 +43,7 @@ class ECDSASigner:
             public_key = ec.EllipticCurvePublicKey.from_encoded_point(
                 ec.SECP256K1(), bytes.fromhex(public_key_hex)
             )
-            public_key.verify(
-                bytes.fromhex(signature_hex), message, ec.ECDSA(hashes.SHA256())
-            )
+            public_key.verify(bytes.fromhex(signature_hex), message, ec.ECDSA(hashes.SHA256()))
             return True
         except Exception:
             return False
